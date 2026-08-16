@@ -3,4 +3,3 @@ pandas>=2.2.0
 requests>=2.31.0
 plotly>=5.20.0
 rapidfuzz>=3.8.0
-pandas>=2.2.0

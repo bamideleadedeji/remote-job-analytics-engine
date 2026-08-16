@@ -1,7 +1,3 @@
-# remote-job-analytics-engine
-An interactive Streamlit dashboard and data engine that aggregates live remote job listings across Data Analytics, Business Intelligence, and Cybersecurity via REST APIs. Features automated data cleaning, real-time KPI metrics, interactive Plotly market analytics, and role-based filtering deployed continuous-integration on Streamlit Cloud
-#  Remote Job Market Analytics Engine
-
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://streamlit.io/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)

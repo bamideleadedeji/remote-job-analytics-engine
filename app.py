@@ -153,7 +153,7 @@ def categorize_region(location_str):
             "nairobi",
             "south africa",
             "ghana",
-            "accra",,
+            "accra",
             "egypt",
         ]
     ):

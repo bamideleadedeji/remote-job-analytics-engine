@@ -384,13 +384,31 @@ if not raw_df.empty:
         mime="text/csv",
     )
 
+    # Configured Dataframe Grid with Direct Apply Link Buttons
     st.dataframe(
         export_df,
         column_config={
             "Application Link": st.column_config.LinkColumn(
-                "Apply", display_text="Apply Now ↗"
-            )
+                "Quick Apply",
+                help="Click to open direct application portal in a new tab",
+                display_text="Apply Now ↗",
+                validate="^https?://",
+            ),
+            "Role Title": st.column_config.TextColumn("Role Title", width="medium"),
+            "Company": st.column_config.TextColumn("Company", width="small"),
+            "Location Details": st.column_config.TextColumn("Location Details", width="medium"),
+            "Region": st.column_config.TextColumn("Region", width="small"),
+            "Feed Source": st.column_config.TextColumn("Feed Source", width="small"),
         },
+        column_order=[
+            "Role Title",
+            "Company",
+            "Domain",
+            "Location Details",
+            "Region",
+            "Feed Source",
+            "Application Link",
+        ],
         use_container_width=True,
         hide_index=True,
     )

@@ -353,8 +353,8 @@ if not raw_df.empty:
 
     st.markdown("---")
 
-    # Table Grid & Export
-    st.subheader("📋 Filtered Remote Openings Grid")
+    # Application Views: Interactive Cards & Table Grid
+    st.subheader("📋 Active Remote Openings")
 
     export_df = filtered_df[
         [
@@ -384,33 +384,56 @@ if not raw_df.empty:
         mime="text/csv",
     )
 
-    # Configured Dataframe Grid with Direct Apply Link Buttons
-    st.dataframe(
-        export_df,
-        column_config={
-            "Application Link": st.column_config.LinkColumn(
-                "Quick Apply",
-                help="Click to open direct application portal in a new tab",
-                display_text="Apply Now ↗",
-                validate="^https?://",
-            ),
-            "Role Title": st.column_config.TextColumn("Role Title", width="medium"),
-            "Company": st.column_config.TextColumn("Company", width="small"),
-            "Location Details": st.column_config.TextColumn("Location Details", width="medium"),
-            "Region": st.column_config.TextColumn("Region", width="small"),
-            "Feed Source": st.column_config.TextColumn("Feed Source", width="small"),
-        },
-        column_order=[
-            "Role Title",
-            "Company",
-            "Domain",
-            "Location Details",
-            "Region",
-            "Feed Source",
-            "Application Link",
-        ],
-        use_container_width=True,
-        hide_index=True,
-    )
+    tab_cards, tab_grid = st.tabs(["🚀 One-Click Apply Cards", "📊 Data Grid View"])
+
+    with tab_cards:
+        if filtered_df.empty:
+            st.info("No matching job listings found for the current filters.")
+        else:
+            for idx, row in filtered_df.reset_index(drop=True).iterrows():
+                with st.container(border=True):
+                    col_info, col_btn = st.columns([3, 1])
+                    with col_info:
+                        st.markdown(f"### **{row['title']}**")
+                        st.markdown(
+                            f"🏢 **{row['company']}** | 🎯 **{row['Domain']}** | 📍 **{row['location']}** ({row['Region Tier']}) | 📌 Source: *{row['source']}*"
+                        )
+                    with col_btn:
+                        st.write("")
+                        st.link_button(
+                            "⚡ Direct Apply",
+                            row["url"],
+                            use_container_width=True,
+                            help="Open application portal directly in a new tab"
+                        )
+
+    with tab_grid:
+        st.dataframe(
+            export_df,
+            column_config={
+                "Application Link": st.column_config.LinkColumn(
+                    "Quick Apply",
+                    help="Click to open direct application portal in a new tab",
+                    display_text="Apply Now ↗",
+                    validate="^https?://",
+                ),
+                "Role Title": st.column_config.TextColumn("Role Title", width="medium"),
+                "Company": st.column_config.TextColumn("Company", width="small"),
+                "Location Details": st.column_config.TextColumn("Location Details", width="medium"),
+                "Region": st.column_config.TextColumn("Region", width="small"),
+                "Feed Source": st.column_config.TextColumn("Feed Source", width="small"),
+            },
+            column_order=[
+                "Role Title",
+                "Company",
+                "Domain",
+                "Location Details",
+                "Region",
+                "Feed Source",
+                "Application Link",
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
 else:
     st.warning("Unable to fetch job listings at this moment.")

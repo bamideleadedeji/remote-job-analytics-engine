@@ -5,36 +5,121 @@ import streamlit as st
 
 # Page Configuration
 st.set_page_config(
-    page_title="Remote Job Market Analytics Engine",
-    page_icon="📊",
+    page_title="Global Remote Job Search & Analytics Engine",
+    page_icon="💼",
     layout="wide",
 )
 
 
-# Data Ingestion Layer with Caching
-@st.cache_data(ttl=3600)
-def load_job_data():
+# --- 1. Remotive API Ingestion ---
+@st.cache_data(ttl=1800)
+def fetch_remotive():
     url = "https://remotive.com/api/remote-jobs"
     try:
-        res = requests.get(url, timeout=12)
+        res = requests.get(url, timeout=10)
         if res.status_code == 200:
-            data = res.json().get("jobs", [])
-            df = pd.DataFrame(data)
-            if not df.empty:
-                df["publication_date"] = pd.to_datetime(df["publication_date"])
-                df["posted_date"] = df["publication_date"].dt.date
-                df["candidate_required_location"] = df[
-                    "candidate_required_location"
-                ].fillna("Worldwide")
-            return df
+            jobs = res.json().get("jobs", [])
+            parsed = []
+            for j in jobs:
+                parsed.append(
+                    {
+                        "title": j.get("title"),
+                        "company": j.get("company_name"),
+                        "location": j.get(
+                            "candidate_required_location", "Worldwide"
+                        ),
+                        "date": j.get("publication_date"),
+                        "url": j.get("url"),
+                        "source": "Remotive",
+                    }
+                )
+            return pd.DataFrame(parsed)
         return pd.DataFrame()
-    except Exception as e:
-        st.error(f"Error fetching API feed: {e}")
+    except Exception:
         return pd.DataFrame()
 
 
-def categorize_domain(title):
+# --- 2. Jobicy API Ingestion ---
+@st.cache_data(ttl=1800)
+def fetch_jobicy():
+    url = "https://jobicy.com/api/v2/remote-jobs"
+    try:
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            jobs = res.json().get("jobs", [])
+            parsed = []
+            for j in jobs:
+                parsed.append(
+                    {
+                        "title": j.get("jobTitle"),
+                        "company": j.get("companyName"),
+                        "location": j.get("jobGeo", "Worldwide"),
+                        "date": j.get("pubDate"),
+                        "url": j.get("url"),
+                        "source": "Jobicy",
+                    }
+                )
+            return pd.DataFrame(parsed)
+        return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+
+# --- 3. Arbeitnow API Ingestion ---
+@st.cache_data(ttl=1800)
+def fetch_arbeitnow():
+    url = "https://www.arbeitnow.com/api/job-board-api"
+    try:
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            jobs = res.json().get("data", [])
+            parsed = []
+            for j in jobs:
+                loc = (
+                    "Worldwide"
+                    if j.get("remote")
+                    else f"{j.get('location')} (Hybrid)"
+                )
+                parsed.append(
+                    {
+                        "title": j.get("title"),
+                        "company": j.get("company_name"),
+                        "location": loc,
+                        "date": j.get("created_at"),
+                        "url": j.get("url"),
+                        "source": "Arbeitnow",
+                    }
+                )
+            return pd.DataFrame(parsed)
+        return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+
+# --- Aggregation & Normalization Pipeline ---
+@st.cache_data(ttl=1800)
+def load_all_remote_jobs():
+    df_remotive = fetch_remotive()
+    df_jobicy = fetch_jobicy()
+    df_arbeitnow = fetch_arbeitnow()
+
+    df = pd.concat(
+        [df_remotive, df_jobicy, df_arbeitnow], ignore_index=True
+    )
+
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["posted_date"] = df["date"].dt.date
+        df["location"] = df["location"].fillna("Worldwide")
+        df = df.drop_duplicates(subset=["title", "company"]).reset_index(
+            drop=True
+        )
+    return df
+
+
+def classify_role(title):
     t = str(title).lower()
+
     if any(
         k in t
         for k in [
@@ -42,12 +127,21 @@ def categorize_domain(title):
             "data analytics",
             "data engineer",
             "data scientist",
+            "sql analyst",
+            "analytics engineer",
         ]
     ):
         return "Data Analytics & Engineering"
     elif any(
         k in t
-        for k in ["business intelligence", "bi analyst", "tableau", "power bi"]
+        for k in [
+            "business intelligence",
+            "bi analyst",
+            "tableau",
+            "power bi",
+            "looker",
+            "bi developer",
+        ]
     ):
         return "Business Intelligence"
     elif any(
@@ -58,6 +152,8 @@ def categorize_domain(title):
             "infosec",
             "security analyst",
             "soc",
+            "information security",
+            "compliance analyst",
         ]
     ):
         return "Cybersecurity"
@@ -66,191 +162,143 @@ def categorize_domain(title):
         for k in ["finance", "financial", "accounting", "auditor", "accountant"]
     ):
         return "Finance & Accounting"
-    return "Other"
+    return "Other Roles"
 
 
-# Data Processing Pipeline
-raw_df = load_job_data()
+# Master Pipeline Execution
+raw_df = load_all_remote_jobs()
 
 if not raw_df.empty:
-    raw_df["Domain"] = raw_df["title"].apply(categorize_domain)
-    target_df = raw_df[raw_df["Domain"] != "Other"].copy()
+    raw_df["Domain"] = raw_df["title"].apply(classify_role)
+
+    # Filter out unclassified roles by default for focused results
+    target_df = raw_df[raw_df["Domain"] != "Other Roles"].copy()
 
     # --- Sidebar Controls ---
-    st.sidebar.title("⚙️ Engine Controls")
+    st.sidebar.title("🔍 Job Search Filters")
 
-    # Domain Selection Filter
-    available_domains = sorted(target_df["Domain"].unique().tolist())
+    # Domain Filter
+    domains = sorted(target_df["Domain"].unique().tolist())
     selected_domains = st.sidebar.multiselect(
-        "Select Target Domains:",
-        options=available_domains,
-        default=available_domains,
+        "Target Domains:", options=domains, default=domains
     )
 
-    # Location Filter
-    locations = ["All Locations"] + sorted(
-        target_df["candidate_required_location"].unique().tolist()
+    # Source API Filter
+    sources = ["All API Sources"] + sorted(
+        target_df["source"].unique().tolist()
     )
-    selected_location = st.sidebar.selectbox(
-        "Location Requirement:", options=locations
-    )
+    selected_source = st.sidebar.selectbox("API Data Source:", options=sources)
 
     # Search Keyword
-    search_term = st.sidebar.text_input("Search Title or Company:", "")
+    search_keyword = st.sidebar.text_input(
+        "Keyword Search (Title or Company):", ""
+    )
 
-    # Application of Filters
+    # Filter Logic
     filtered_df = target_df[target_df["Domain"].isin(selected_domains)]
 
-    if selected_location != "All Locations":
-        filtered_df = filtered_df[
-            filtered_df["candidate_required_location"] == selected_location
-        ]
+    if selected_source != "All API Sources":
+        filtered_df = filtered_df[filtered_df["source"] == selected_source]
 
-    if search_term:
+    if search_keyword:
         filtered_df = filtered_df[
-            filtered_df["title"].str.contains(search_term, case=False, na=False)
-            | filtered_df["company_name"].str.contains(
-                search_term, case=False, na=False
+            filtered_df["title"].str.contains(
+                search_keyword, case=False, na=False
+            )
+            | filtered_df["company"].str.contains(
+                search_keyword, case=False, na=False
             )
         ]
 
     # --- Header Section ---
-    st.title("📊 Remote Tech Job Market Intelligence Engine")
+    st.title("💼 Multi-Source Remote Tech Job Engine")
     st.caption(
-        "Live Market Data Engine & Job Discovery Platform for Analytics, BI, Cybersecurity, and Finance Roles"
+        "Aggregating Live Opportunities across Data Analytics, BI, Cybersecurity, and Finance from Remotive, Jobicy, and Arbeitnow"
     )
     st.markdown("---")
 
-    # --- Key Performance Indicators (KPIs) ---
+    # KPI Metrics
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Active Opportunities", len(filtered_df))
-    m2.metric(
-        "Worldwide Eligible",
+    m1.metric("Active Matching Roles", len(filtered_df))
+    m2.metric("Aggregated Sources", raw_df["source"].nunique())
+    m3.metric(
+        "Worldwide Openings",
         len(
             filtered_df[
-                filtered_df["candidate_required_location"].str.contains(
-                    "Worldwide", case=False
-                )
+                filtered_df["location"].str.contains("Worldwide", case=False)
             ]
         ),
     )
-    m3.metric(
-        "Unique Companies",
+    m4.metric(
+        "Unique Employers",
         (
-            filtered_df["company_name"].nunique()
+            filtered_df["company"].nunique()
             if not filtered_df.empty
             else 0
         ),
     )
-    m4.metric(
-        "Top Domain",
-        (
-            filtered_df["Domain"].mode()[0]
-            if not filtered_df.empty
-            else "N/A"
-        ),
-    )
 
     st.markdown("---")
 
-    # --- Visual Market Analytics ---
-    st.subheader("📈 Interactive Market Analytics")
-
+    # Analytics Section
+    st.subheader("📊 Market Intelligence Breakdown")
     col1, col2 = st.columns(2)
 
     with col1:
-        # Domain Share Chart
         domain_counts = (
             filtered_df["Domain"].value_counts().reset_index()
         )
         domain_counts.columns = ["Domain", "Count"]
-
         fig_pie = px.pie(
             domain_counts,
             values="Count",
             names="Domain",
-            title="Role Distribution by Domain",
+            title="Role Distribution",
             hole=0.4,
             color_discrete_sequence=px.colors.qualitative.Bold,
         )
-        fig_pie.update_layout(margin=dict(t=40, b=20, l=20, r=20))
         st.plotly_chart(fig_pie, use_container_width=True)
 
     with col2:
-        # Top Hiring Companies
         top_companies = (
-            filtered_df["company_name"]
-            .value_counts()
-            .head(10)
-            .reset_index()
+            filtered_df["company"].value_counts().head(10).reset_index()
         )
-        top_companies.columns = ["Company", "Open Positions"]
-
+        top_companies.columns = ["Company", "Openings"]
         fig_bar = px.bar(
             top_companies,
-            x="Open Positions",
+            x="Openings",
             y="Company",
             orientation="h",
-            title="Top Hiring Companies in Selected Domains",
-            color="Open Positions",
+            title="Top Hiring Companies",
+            color="Openings",
             color_continuous_scale="Viridis",
         )
-        fig_bar.update_layout(
-            yaxis={"categoryorder": "total ascending"},
-            margin=dict(t=40, b=20, l=20, r=20),
-        )
+        fig_bar.update_layout(yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(fig_bar, use_container_width=True)
-
-    # Time-Series Posting Volume Chart
-    st.subheader("📅 Posting Velocity Over Time")
-    trend_df = (
-        filtered_df.groupby(["posted_date", "Domain"])
-        .size()
-        .reset_index(name="Postings")
-    )
-
-    fig_line = px.line(
-        trend_df,
-        x="posted_date",
-        y="Postings",
-        color="Domain",
-        title="Daily Job Posting Velocity by Domain",
-        markers=True,
-    )
-    fig_line.update_xaxes(title_text="Publication Date")
-    fig_line.update_yaxes(title_text="Number of Openings")
-    st.plotly_chart(fig_line, use_container_width=True)
 
     st.markdown("---")
 
-    # --- Data Grid View & Export ---
+    # Output Grid & Download
     st.subheader("📋 Active Openings Grid")
 
     export_df = filtered_df[
-        [
-            "title",
-            "company_name",
-            "Domain",
-            "candidate_required_location",
-            "posted_date",
-            "url",
-        ]
+        ["title", "company", "Domain", "location", "posted_date", "source", "url"]
     ].rename(
         columns={
             "title": "Role Title",
-            "company_name": "Company",
-            "candidate_required_location": "Location",
-            "posted_date": "Posted Date",
+            "company": "Company",
+            "location": "Location Constraint",
+            "posted_date": "Date Posted",
+            "source": "Source Feed",
             "url": "Application Link",
         }
     )
 
-    # CSV Download Button
     csv_data = export_df.to_csv(index=False).encode("utf-8")
     st.download_button(
-        label="📥 Download Filtered Results (CSV)",
+        label="📥 Export Search Results to CSV",
         data=csv_data,
-        file_name="remote_job_search_results.csv",
+        file_name="remote_jobs_aggregated.csv",
         mime="text/csv",
     )
 
@@ -260,12 +308,10 @@ if not raw_df.empty:
             "Application Link": st.column_config.LinkColumn(
                 "Apply", display_text="Apply Now ↗"
             ),
-            "Posted Date": st.column_config.DateColumn("Date Posted"),
+            "Date Posted": st.column_config.DateColumn("Posted Date"),
         },
         use_container_width=True,
         hide_index=True,
     )
 else:
-    st.warning(
-        "No live market data available. Please verify API connection status."
-    )
+    st.warning("No job feed data returned. Please try refreshing the app.")

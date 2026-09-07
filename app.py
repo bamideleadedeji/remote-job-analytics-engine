@@ -2,6 +2,7 @@ import pandas as pd
 import plotly.express as px
 import requests
 import streamlit as st
+import xml.etree.ElementTree as ET
 
 # Page Configuration
 st.set_page_config(
@@ -11,7 +12,51 @@ st.set_page_config(
 )
 
 
-# --- 1. Remotive API ---
+# --- 1. We Work Remotely (WWR) RSS Feeds ---
+@st.cache_data(ttl=1800)
+def fetch_weworkremotely():
+    # WWR RSS feeds for Data, Programming, and DevOps
+    urls = [
+        "https://weworkremotely.com/categories/remote-data-science-jobs.rss",
+        "https://weworkremotely.com/categories/remote-programming-jobs.rss",
+        "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss",
+    ]
+    parsed = []
+    headers = {"User-Agent": "Mozilla/5.0"}
+    for url in urls:
+        try:
+            res = requests.get(url, headers=headers, timeout=10)
+            if res.status_code == 200:
+                root = ET.fromstring(res.content)
+                for item in root.findall("./channel/item"):
+                    title = item.findtext("title", "")
+                    link = item.findtext("link", "")
+                    pub_date = item.findtext("pubDate", "")
+                    
+                    # WWR titles are formatted as "Company: Title"
+                    company = "We Work Remotely"
+                    job_title = title
+                    if ":" in title:
+                        parts = title.split(":", 1)
+                        company = parts[0].strip()
+                        job_title = parts[1].strip()
+
+                    parsed.append(
+                        {
+                            "title": job_title,
+                            "company": company,
+                            "location": "Worldwide / Remote",
+                            "date": pub_date,
+                            "url": link,
+                            "source": "We Work Remotely",
+                        }
+                    )
+        except Exception:
+            continue
+    return pd.DataFrame(parsed)
+
+
+# --- 2. Remotive API ---
 @st.cache_data(ttl=1800)
 def fetch_remotive():
     url = "https://remotive.com/api/remote-jobs"
@@ -39,7 +84,7 @@ def fetch_remotive():
         return pd.DataFrame()
 
 
-# --- 2. Jobicy API ---
+# --- 3. Jobicy API ---
 @st.cache_data(ttl=1800)
 def fetch_jobicy():
     url = "https://jobicy.com/api/v2/remote-jobs"
@@ -65,7 +110,7 @@ def fetch_jobicy():
         return pd.DataFrame()
 
 
-# --- 3. Arbeitnow API ---
+# --- 4. Arbeitnow API ---
 @st.cache_data(ttl=1800)
 def fetch_arbeitnow():
     url = "https://www.arbeitnow.com/api/job-board-api"
@@ -96,9 +141,9 @@ def fetch_arbeitnow():
         return pd.DataFrame()
 
 
-# --- 4. Google Jobs via SerpAPI (Regional Targeted Search) ---
+# --- 5. Google Jobs via SerpAPI ---
 @st.cache_data(ttl=1800)
-def fetch_serpapi_jobs(api_key, query="remote data analyst lagos"):
+def fetch_serpapi_jobs(api_key, query="remote analytics engineer global"):
     if not api_key:
         return pd.DataFrame()
     url = "https://serpapi.com/search.json"
@@ -119,7 +164,7 @@ def fetch_serpapi_jobs(api_key, query="remote data analyst lagos"):
                     {
                         "title": j.get("title"),
                         "company": j.get("company_name"),
-                        "location": j.get("location", "Lagos / Remote"),
+                        "location": j.get("location", "Worldwide / Remote"),
                         "date": detected_extensions.get(
                             "posted_at", "Recently"
                         ),
@@ -172,15 +217,17 @@ def classify_role(title):
     if any(
         k in t
         for k in [
+            "analytics engineer",
+            "dbt",
+            "data engineer",
             "data analyst",
             "data analytics",
-            "data engineer",
             "data scientist",
             "sql analyst",
-            "analytics engineer",
+            "data platform",
         ]
     ):
-        return "Data Analytics & Engineering"
+        return "Analytics & Data Engineering"
     elif any(
         k in t
         for k in [
@@ -190,6 +237,7 @@ def classify_role(title):
             "power bi",
             "looker",
             "bi developer",
+            "omni",
         ]
     ):
         return "Business Intelligence"
@@ -208,10 +256,10 @@ def classify_role(title):
         return "Cybersecurity"
     elif any(
         k in t
-        for k in ["finance", "financial", "accounting", "auditor", "accountant"]
+        for k in ["finance", "financial", "accounting", "auditor", "accountant", "ledger"]
     ):
         return "Finance & Accounting"
-    return "Other Roles"
+    return "Other Tech Roles"
 
 
 # --- Data Pipeline Execution ---
@@ -221,21 +269,22 @@ serpapi_key = st.sidebar.text_input(
 )
 
 # Load feeds
+df_wwr = fetch_weworkremotely()
 df_remotive = fetch_remotive()
 df_jobicy = fetch_jobicy()
 df_arbeitnow = fetch_arbeitnow()
 df_serpapi = fetch_serpapi_jobs(
-    serpapi_key, query="remote data analyst cybersecurity Lagos Nigeria"
+    serpapi_key, query="remote analytics engineer dbt global"
 )
 
 raw_df = pd.concat(
-    [df_remotive, df_jobicy, df_arbeitnow, df_serpapi], ignore_index=True
+    [df_wwr, df_remotive, df_jobicy, df_arbeitnow, df_serpapi], ignore_index=True
 )
 
 if not raw_df.empty:
     raw_df["date"] = pd.to_datetime(raw_df["date"], errors="coerce")
     raw_df["posted_date"] = raw_df["date"].dt.date
-    raw_df["location"] = raw_df["location"].fillna("Worldwide")
+    raw_df["location"] = raw_df["location"].fillna("Worldwide / Remote")
     raw_df = raw_df.drop_duplicates(subset=["title", "company"]).reset_index(
         drop=True
     )
@@ -243,7 +292,7 @@ if not raw_df.empty:
     raw_df["Domain"] = raw_df["title"].apply(classify_role)
     raw_df["Region Tier"] = raw_df["location"].apply(categorize_region)
 
-    target_df = raw_df[raw_df["Domain"] != "Other Roles"].copy()
+    target_df = raw_df[raw_df["Domain"] != "Other Tech Roles"].copy()
 
     # --- Sidebar Filters ---
     st.sidebar.markdown("---")
@@ -252,9 +301,9 @@ if not raw_df.empty:
     # Region Filter
     regions = [
         "All Regions",
-        "Lagos / Nigeria",
-        "Africa / EMEA",
         "Worldwide (Open to All)",
+        "Africa / EMEA",
+        "Lagos / Nigeria",
     ]
     selected_region = st.sidebar.selectbox("Geographic Focus:", options=regions)
 
@@ -266,7 +315,7 @@ if not raw_df.empty:
 
     # Keyword Search
     search_keyword = st.sidebar.text_input(
-        "Keyword Search (Title/Company/City):", ""
+        "Keyword Search (Title / Company / Tech Stack):", ""
     )
 
     # Filter Applications
@@ -291,9 +340,9 @@ if not raw_df.empty:
         ]
 
     # --- UI Layout ---
-    st.title("🌍 Global & Regional Remote Tech Engine")
+    st.title("🌍 Global Remote Tech & Analytics Engine")
     st.caption(
-        "Aggregating Remote & Hybrid Opportunities across Data, BI, Cybersecurity, and Finance with dedicated focus on Nigeria & Africa"
+        "Aggregating Worldwide & Regional Remote Opportunities across Analytics Engineering, Data, BI, Cybersecurity, and Finance"
     )
     st.markdown("---")
 
@@ -301,60 +350,24 @@ if not raw_df.empty:
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Active Matching Roles", len(filtered_df))
     m2.metric(
-        "Lagos & Nigeria Openings",
-        len(raw_df[raw_df["Region Tier"] == "Lagos / Nigeria"]),
+        "Worldwide Roles",
+        len(raw_df[raw_df["Region Tier"] == "Worldwide (Open to All)"]),
     )
     m3.metric(
         "Africa / EMEA Roles",
         len(raw_df[raw_df["Region Tier"] == "Africa / EMEA"]),
     )
     m4.metric(
-        "Worldwide Roles",
-        len(raw_df[raw_df["Region Tier"] == "Worldwide (Open to All)"]),
+        "Lagos & Nigeria Openings",
+        len(raw_df[raw_df["Region Tier"] == "Lagos / Nigeria"]),
     )
 
     st.markdown("---")
 
-    # Analytics Dashboard
-    st.subheader("📊 Market Intelligence Breakdown")
-    c1, c2 = st.columns(2)
-
-    with c1:
-        reg_counts = (
-            filtered_df["Region Tier"].value_counts().reset_index()
-        )
-        reg_counts.columns = ["Region", "Count"]
-        fig_region = px.pie(
-            reg_counts,
-            values="Count",
-            names="Region",
-            title="Geographic Availability",
-            hole=0.4,
-            color_discrete_sequence=px.colors.qualitative.Set2,
-        )
-        st.plotly_chart(fig_region, use_container_width=True)
-
-    with c2:
-        top_comp = (
-            filtered_df["company"].value_counts().head(10).reset_index()
-        )
-        top_comp.columns = ["Company", "Openings"]
-        fig_comp = px.bar(
-            top_comp,
-            x="Openings",
-            y="Company",
-            orientation="h",
-            title="Top Hiring Companies",
-            color="Openings",
-            color_continuous_scale="Purples",
-        )
-        fig_comp.update_layout(yaxis={"categoryorder": "total ascending"})
-        st.plotly_chart(fig_comp, use_container_width=True)
-
-    st.markdown("---")
-
-    # Application Views: Interactive Cards & Table Grid
-    st.subheader("📋 Active Remote Openings")
+    # Navigation Tabs
+    tab_cards, tab_grid, tab_directory = st.tabs(
+        ["🚀 One-Click Apply Cards", "📊 Data Grid View", "🌐 Global Remote Companies & Boards"]
+    )
 
     export_df = filtered_df[
         [
@@ -377,16 +390,14 @@ if not raw_df.empty:
         }
     )
 
-    st.download_button(
-        label="📥 Export Filtered Search to CSV",
-        data=export_df.to_csv(index=False).encode("utf-8"),
-        file_name="remote_jobs_africa_global.csv",
-        mime="text/csv",
-    )
-
-    tab_cards, tab_grid = st.tabs(["🚀 One-Click Apply Cards", "📊 Data Grid View"])
-
     with tab_cards:
+        st.download_button(
+            label="📥 Export Filtered Search to CSV",
+            data=export_df.to_csv(index=False).encode("utf-8"),
+            file_name="remote_jobs_global.csv",
+            mime="text/csv",
+        )
+        st.write("")
         if filtered_df.empty:
             st.info("No matching job listings found for the current filters.")
         else:
@@ -404,7 +415,7 @@ if not raw_df.empty:
                             "⚡ Direct Apply",
                             row["url"],
                             use_container_width=True,
-                            help="Open application portal directly in a new tab"
+                            help="Open application portal directly in a new tab",
                         )
 
     with tab_grid:
@@ -435,5 +446,28 @@ if not raw_df.empty:
             use_container_width=True,
             hide_index=True,
         )
+
+    with tab_directory:
+        st.subheader(" Curated Global Remote Companies & Job Platforms")
+        st.write(
+            "These platforms and companies actively hire global employees and contractors using Employer of Record (EOR) services like Deel and Remote.com."
+        )
+
+        col_left, col_right = st.columns(2)
+
+        with col_left:
+            st.markdown("####  Premier Global Remote Platforms")
+            st.markdown("- **[Otta / Handshake](https://otta.com):** Search 'Analytics Engineer' with Location: *Anywhere / Remote*.")
+            st.markdown("- **[Wellfound](https://wellfound.com):** Filter by *Analytics Engineer*, *Worldwide Remote*, and *Hiring International Candidates*.")
+            st.markdown("- **[We Work Remotely](https://weworkremotely.com):** Explore top worldwide data, engineering, and DevOps roles.")
+            st.markdown("- **[Remotive](https://remotive.com):** Filter 'Data' category by *Worldwide* remote access.")
+
+        with col_right:
+            st.markdown("####  100% Distributed Remote-First Companies")
+            st.markdown("- **[GitLab Careers](https://about.gitlab.com/jobs):** Fully remote company with global hiring infrastructure for data & BI.")
+            st.markdown("- **[Canonical Careers](https://canonical.com/careers):** Distributed workforce hiring remote Data Engineers & Analytics Engineers globally.")
+            st.markdown("- **[Automattic Careers](https://automattic.com/work-with-us):** Creators of WordPress; 100% remote global engineering team.")
+            st.markdown("- **[Zapier Careers](https://zapier.com/jobs):** Distributed global analytics, data platform, and telemetry teams.")
+
 else:
     st.warning("Unable to fetch job listings at this moment.")
